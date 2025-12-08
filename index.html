@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Rutas de Bus - Con Tiempo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f0f4f8;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #map-container {
+            width: 100%;
+            height: 100vh;
+            background-color: #e2e8f0;
+            cursor: grab;
+            position: relative;
+            overflow: hidden;
+        }
+        #map-container:active {
+            cursor: grabbing;
+        }
+        #city-svg {
+            transform-origin: 0 0;
+            transition: width 0.5s ease, height 0.5s ease; /* Suavizar zoom */
+        }
+        /* Clase para evitar transición al hacer drag */
+        .no-transition {
+            transition: none !important;
+        }
+        
+        .block-rect {
+            stroke: #475569;
+            stroke-width: 1;
+            transition: fill 0.3s;
+        }
+        .bus-stop {
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+        .bus-stop:hover {
+            r: 12;
+            stroke-width: 3;
+        }
+        /* Estilo para estaciones fuera de servicio */
+        .bus-stop-group.out-of-service {
+            opacity: 0.5;
+            filter: grayscale(100%);
+        }
+        .bus-stop-group.out-of-service text {
+            text-decoration: line-through;
+            fill: #64748b;
+        }
+        .bus-stop-group.out-of-service circle,
+        .bus-stop-group.out-of-service rect {
+            stroke: #ef4444 !important; /* Borde rojo */
+            fill: #e2e8f0 !important;   /* Relleno gris */
+        }
+
+        .route-path {
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            opacity: 1;
+            filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));
+        }
+        .static-bus-line {
+            fill: none;
+            stroke-width: 6;
+            stroke-linecap: round;
+            opacity: 0.4;
+            transition: opacity 0.3s;
+        }
+        .static-bus-line:hover {
+            opacity: 0.8;
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 50;
+        }
+        .zoom-btn {
+            background: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            color: #475569;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .zoom-btn:hover {
+            background: #f1f5f9;
+            transform: translateY(-2px);
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            font-size: 0.75rem;
+            margin-bottom: 4px;
+            color: #64748b;
+        }
+        .legend-line {
+            width: 20px;
+            height: 4px;
+            border-radius: 2px;
+            margin-right: 8px;
+        }
+        
+        #control-panel {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        #control-panel.collapsed {
+            transform: translateX(-120%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        #instructions-panel {
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+        }
+        #instructions-panel.hidden-panel {
+            transform: translateX(120%);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #expand-btn {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateX(-150%);
+        }
+        #expand-btn.visible {
+            transform: translateX(0);
+        }
+
+        /* Marker Styles */
+        .map-marker {
+            filter: drop-shadow(0px 4px 3px rgba(0,0,0,0.4));
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-origin: bottom center;
+        }
+        .map-marker:hover {
+            transform: scale(1.2) translateY(-5px);
+        }
+        .marker-bounce {
+            animation: bounce 0.5s infinite alternate;
+        }
+        @keyframes bounce {
+            from { transform: translateY(0); }
+            to { transform: translateY(-10px); }
+        }
+
+        #route-steps::-webkit-scrollbar {
+            width: 6px;
+        }
+        #route-steps::-webkit-scrollbar-track {
+            background: #f1f5f9; 
+            border-radius: 4px;
+        }
+        #route-steps::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        #route-steps::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        
+        /* Toggle Switch Styles */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #68D391;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #68D391;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="expand-btn" class="fixed top-4 left-4 z-50 glass-panel p-3 rounded-lg shadow-lg text-blue-600 hover:bg-white hover:text-blue-700 w-12 h-12 flex items-center justify-center cursor-pointer border border-white/40">
+        <i class="fas fa-bars text-xl"></i>
+    </button>
+
+    <!-- PANEL IZQUIERDO: CONTROLES -->
+    <div id="control-panel" class="fixed top-4 left-4 z-50 glass-panel rounded-xl p-6 w-80 max-w-[90vw] shadow-2xl flex flex-col">
+        <button id="collapse-btn" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors" title="Ocultar panel">
+            <i class="fas fa-chevron-left"></i>
+        </button>
+
+        <h1 class="text-xl font-bold text-slate-800 mb-1"><i class="fas fa-bus text-blue-600 mr-2"></i>MetroBus City</h1>
+        <p class="text-xs text-slate-500 mb-4">Planificador con Tiempos</p>
+
+        <!-- Nuevo Control: Modo Mantenimiento -->
+        <div class="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg">
+            <div class="flex items-center justify-between">
+                <span class="text-sm font-bold text-red-600 flex items-center">
+                    <i class="fas fa-tools mr-2"></i> Mantenimiento
+                </span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="maintenance-mode" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                </label>
+            </div>
+            <p class="text-xs text-red-400 mt-1">Activa para deshabilitar estaciones al hacer clic.</p>
+        </div>
+
+        <div class="space-y-4 shrink-0">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1 flex items-center">
+                    <i class="fas fa-map-marker-alt text-green-600 mr-2"></i> Origen (A)
+                </label>
+                <div class="relative">
+                    <select id="start-select" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md bg-slate-50 border">
+                        <option value="">Selecciona en mapa...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex justify-center -my-2">
+                <i class="fas fa-arrow-down text-slate-400"></i>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1 flex items-center">
+                    <i class="fas fa-map-marker-alt text-red-500 mr-2"></i> Destino (B)
+                </label>
+                <div class="relative">
+                    <select id="end-select" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md bg-slate-50 border">
+                        <option value="">Selecciona en mapa...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="calc-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center justify-center shadow-lg transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Buscar
+                </button>
+                <button id="reset-btn" class="bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md" title="Limpiar selección">
+                    <i class="fas fa-undo"></i>
+                </button>
+            </div>
+            
+            <div id="status-msg" class="text-sm text-center text-slate-600 h-5 font-medium"></div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-200 shrink-0">
+            <h3 class="text-xs font-bold text-slate-600 mb-2">Líneas Activas</h3>
+            <div id="lines-legend"></div>
+        </div>
+    </div>
+
+    <!-- PANEL DERECHO: INSTRUCCIONES DE RUTA -->
+    <div id="instructions-panel" class="fixed top-4 right-4 z-50 glass-panel rounded-xl p-4 w-80 max-w-[90vw] shadow-2xl hidden-panel flex flex-col max-h-[80vh]">
+        <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-200 shrink-0">
+            <h3 class="font-bold text-slate-700 flex items-center">
+                <i class="fas fa-clock text-blue-600 mr-2"></i>
+                Ruta
+            </h3>
+            <button id="close-instructions" class="text-slate-400 hover:text-red-500 transition-colors w-6 h-6 flex items-center justify-center rounded hover:bg-red-50">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <div id="route-summary" class="text-center mb-2 bg-slate-50 p-3 rounded border border-slate-100 shadow-inner"></div>
+
+        <div id="route-steps" class="space-y-3 overflow-y-auto pr-1 flex-grow"></div>
+    </div>
+
+    <div class="zoom-controls">
+        <button class="zoom-btn" onclick="applyZoom(0.2)" title="Acercar">
+            <i class="fas fa-plus"></i>
+        </button>
+        <button class="zoom-btn" onclick="applyZoom(-0.2)" title="Alejar">
+            <i class="fas fa-minus"></i>
+        </button>
+        <button class="zoom-btn" onclick="resetZoom()" title="Resetear Vista">
+            <i class="fas fa-compress-arrows-alt"></i>
+        </button>
+    </div>
+
+    <div id="map-container">
+        <svg id="city-svg" width="5000" height="5000" viewBox="0 0 5000 5000">
+            <defs>
+                <pattern id="buildingPattern" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
+                    <rect width="10" height="10" fill="#cbd5e1"/>
+                    <rect x="2" y="2" width="2" height="2" fill="#94a3b8"/>
+                    <rect x="6" y="2" width="2" height="2" fill="#94a3b8"/>
+                </pattern>
+                <pattern id="parkPattern" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+                    <rect width="20" height="20" fill="#bbf7d0"/>
+                    <circle cx="5" cy="5" r="2" fill="#4ade80"/>
+                    <circle cx="15" cy="15" r="3" fill="#22c55e"/>
+                </pattern>
+                <!-- Marker Icon Definition -->
+                <g id="pin-icon">
+                     <path d="M12 0c-4.418 0-8 3.582-8 8 0 2.028 1.644 5.258 8 12 6.356-6.742 8-9.972 8-12 0-4.418-3.582-8-8-8z" />
+                     <circle cx="12" cy="8" r="3" fill="white"/>
+                </g>
+            </defs>
+            <g id="city-layer"></g> 
+            <g id="lines-layer"></g>
+            <g id="connections-layer"></g>
+            <g id="stops-layer"></g>
+            <g id="markers-layer"></g>
+            <g id="bus-layer"></g>
+        </svg>
+    </div>
+
+    <script src="script.js">
+    </script>
+</body>
+</html>
